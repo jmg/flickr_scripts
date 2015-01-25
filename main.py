@@ -1,6 +1,7 @@
 import flickrapi
 import webbrowser
 import os
+import threading
 
 API_KEY = u"995f1b5f7110a1828ab4898be30d3335"
 API_SECRET = u"903b47efa77d34f8"
@@ -72,23 +73,11 @@ def add_photo_stream_to_album(album_name):
         flickr.photosets.addPhoto(photoset_id=photoset["id"], photo_id=photo["id"])
 
 
-def upload_photos_in_dir(directory, album_name=None):
-    """
-        Uploads all photos in a directory to flickr.
-        The album_name is optional.
-    """
-    photos_names = [photo["title"] for photo in get_photostream()]
+def upload_photos(files, directory, photoset, photos_names):
 
-    photoset = None
-    if album_name is not None:
-        photoset = find_album(album_name)
-        if photoset is None:
-            print "Album not found"
-            return
-
-    tries = 3
+    MAX_TRIES = 3
     uploads = 1
-    files = os.listdir(directory)
+
     for file_name in files:
         file_path = os.path.join(directory, file_name)
         if os.path.isfile(file_path):
@@ -113,11 +102,11 @@ def upload_photos_in_dir(directory, album_name=None):
                 print "Uploading %s/%s: %s" % (uploads, len(files), file_name)
 
                 response = None
-                for x in range(tries):
+                for x in range(MAX_TRIES):
                     try:
                         response = flickr.upload(**photo_data)
                         break
-                    except:
+                    except flickrapi.FlickrError:
                         print "Error uploading: %s. Retrying..." % file_name
 
                 if response is None:
@@ -126,9 +115,46 @@ def upload_photos_in_dir(directory, album_name=None):
 
                 photo_id = response[0].text
                 if photoset is not None:
-                    flickr.photosets.addPhoto(photoset_id=photoset["id"], photo_id=photo_id)
+                    photosetflickr.photosets.addPhoto(photoset_id=photoset["id"], photo_id=photo_id)
 
                 uploads += 1
+
+
+def chunks(l, n):
+    """
+        Yield successive n-sized chunks from l.
+    """
+    for i in xrange(0, len(l), n):
+        yield l[i:i+n]
+
+
+def upload_photos_in_dir(directory, album_name=None):
+    """
+        Uploads all photos in a directory to flickr.
+        The album_name is optional.
+    """
+    photos_names = [photo["title"] for photo in get_photostream()]
+
+    photoset = None
+    if album_name is not None:
+        photoset = find_album(album_name)
+        if photoset is None:
+            print "Album not found"
+            return
+
+    files = os.listdir(directory)
+    THREADING = 2
+    pool = []
+
+    for i in range(THREADING):
+
+        files_chunks = list(chunks(files, len(files) / THREADING))
+        thread = threading.Thread(target=upload_photos, args=(files_chunks[i], directory, photoset, photos_names))
+        thread.start()
+        pool.append(thread)
+
+    for thread in pool:
+        thread.join()
 
 
 if __name__ == "__main__":
