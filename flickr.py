@@ -33,7 +33,8 @@ def remove_duplicated_photos():
     photos = []
     duplicated = 0
     for photo in get_photostream():
-        if not photo["title"] in photos:
+        _, ext = os.path.splitext(photo["title"])
+        if not photo["title"] in photos and is_valid_extension(ext[1:]):
             photos.append(photo["title"])
         else:
             print "Deleting duplicated photo: %s" % photo["title"]
@@ -78,45 +79,53 @@ def add_photo_stream_to_album(album_name):
         flickr.photosets.addPhoto(photoset_id=photoset["id"], photo_id=photo["id"])
 
 
-def upload_photos(files, directory, photoset):
+def get_current_thread_name():
+
+    return threading.current_thread().getName()
+
+
+def upload_photo(file_name, file_path, photoset=None):
 
     MAX_TRIES = 3
+
+    response = None
+    for x in range(MAX_TRIES):
+        try:
+            file_obj = open(file_path)
+            photo_data = {
+                "filename": file_name,
+                "title": file_name,
+                "fileobj": file_obj,
+                "is_public": False,
+                "is_family": True,
+                "is_friend": True,
+                "format": "etree",
+            }
+
+            response = flickr.upload(**photo_data)
+            break
+        except Exception, e:
+            print "%s: Error uploading: %s. Retrying...\n%s" % (get_current_thread_name(), file_name, e)
+        finally:
+            file_obj.close()
+
+    if response is None:
+        print "Could not upload: %s" % file_name
+        return
+
+    photo_id = response[0].text
+    if photoset is not None:
+        flickr.photosets.addPhoto(photoset_id=photoset["id"], photo_id=photo_id)
+
+    return photo_id
+
+
+def upload_photos(files, photoset=None):
+
     uploads = 1
-    current_thread_name = threading.current_thread().getName()
-
     for (file_name, file_path) in files:
-
-        for x in range(MAX_TRIES):
-            try:
-                file_obj = open(file_path)
-                photo_data = {
-                    "filename": file_name,
-                    "title": file_name,
-                    "fileobj": file_obj,
-                    "is_public": False,
-                    "is_family": True,
-                    "is_friend": True,
-                    "format": "etree",
-                }
-
-                print "%s: Uploading %s/%s: %s" % (current_thread_name, uploads, len(files), file_name)
-
-                response = None
-                response = flickr.upload(**photo_data)
-                break
-            except Exception, e:
-                print "%s: Error uploading: %s. Retrying...\n%s" % (current_thread_name, file_name, e)
-            finally:
-                file_obj.close()
-
-        if response is None:
-            print "Could not upload: %s" % file_name
-            continue
-
-        photo_id = response[0].text
-        if photoset is not None:
-            flickr.photosets.addPhoto(photoset_id=photoset["id"], photo_id=photo_id)
-
+        print "%s: Uploading %s/%s: %s" % (get_current_thread_name(), uploads, len(files), file_name)
+        upload_photo(file_name, file_path, photoset=photoset)
         uploads += 1
 
 
@@ -158,6 +167,9 @@ def upload_photos_in_dir(directory, album_name=None):
                 upload_files.append((file_name, file_path))
 
     THREADING = 2
+    if len(upload_files) < THREADING:
+        THREADING = 1
+
     print "*" * 40
     print "Already uploaded: %s" % len(already_uploaded)
     print "To upload: %s" % len(upload_files)
@@ -171,8 +183,11 @@ def upload_photos_in_dir(directory, album_name=None):
     if album_name is not None:
         photoset = find_album(album_name)
         if photoset is None:
-            print "Album not found"
-            return
+            print "Album not found. Creating: %s" % album_name
+
+            file_name, file_path = upload_files.pop()
+            photo_id = upload_photo(file_name, file_path)
+            photoset = flickr.photosets.create(title=album_name, primary_photo_id=photo_id)
 
     files_chunks = list(chunks(upload_files, len(upload_files) / THREADING))
 
@@ -180,7 +195,7 @@ def upload_photos_in_dir(directory, album_name=None):
 
     for i in range(THREADING):
 
-        thread = threading.Thread(target=upload_photos, args=(files_chunks[i], directory, photoset))
+        thread = threading.Thread(target=upload_photos, args=(files_chunks[i], photoset))
         thread.start()
         pool.append(thread)
 
@@ -192,8 +207,7 @@ if __name__ == "__main__":
 
     auth()
     #photos = get_photostream()
-    #import ipdb; ipdb.set_trace()
 
     #remove_duplicated_photos()
-    add_photo_stream_to_album("Mar Del Plata 2015")
-    #upload_photos_in_dir("/home/jm/Pictures/Mar del plata 2015/Seleccion/", album_name="Mar Del Plata 2015")
+    #add_photo_stream_to_album("Mar Del Plata 2015")
+    upload_photos_in_dir("/home/jm/Pictures/Mar del plata 2015/", album_name="Mas Mar Del Plata 2015")
